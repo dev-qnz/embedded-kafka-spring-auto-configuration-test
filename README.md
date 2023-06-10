@@ -1,3 +1,5 @@
+![build status](https://github.com/dev-qnz/embedded-kafka-spring-auto-configuration-test/actions/workflows/build-and-test.yml/badge.svg)
+
 # `@EmbeddedKafka` and Spring Kafka auto-configuration in a `@SpringBootTest` joined with `bootstrapServersProperty`
 
 We all are used to Spring coming with reasonable defaults for everything and everything working together smoothly out of the box.
