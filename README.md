@@ -1,38 +1,24 @@
 ![build status](https://github.com/dev-qnz/embedded-kafka-spring-auto-configuration-test/actions/workflows/build-and-test.yml/badge.svg)
 
-# `@EmbeddedKafka` and Spring Kafka auto-configuration in a `@SpringBootTest` joined with `bootstrapServersProperty`
+# `@EmbeddedKafka` and Spring Boot Kafka auto-configuration in a `@SpringBootTest` joined with `bootstrapServersProperty`
 
 We all are used to Spring coming with reasonable defaults for everything and everything working together smoothly out of the box.
-However, with
+Surprisingly, however, this does not appear to be the case by default with
 [`@EmbeddedKafka`](https://docs.spring.io/spring-kafka/api/org/springframework/kafka/test/context/EmbeddedKafka.html)
-and Spring Boot Kafka auto-configuration[^spring-boot-kafka-auto-configuration],
-surprisingly this does not appear to be the case by default.
-
-As simple as
-`bootstrapServersProperty = "spring.kafka.bootstrap-servers"`[^embeddedkafka-bootstrap-servers-property]
-does the trick.
-
-
-## Preface
-
-As a beginner to Kafka, I had quite some difficulty to find out how to make
-[`@EmbeddedKafka`](https://docs.spring.io/spring-kafka/api/org/springframework/kafka/test/context/EmbeddedKafka.html)
-and Spring Boot Kafka auto-configuration[^spring-boot-kafka-auto-configuration] in a
-[`@SpringBootTest`](https://docs.spring.io/spring-boot/docs/current/api/org/springframework/boot/test/context/SpringBootTest.html)
-with
+and
 [`@EnableAutoConfiguration`](https://docs.spring.io/spring-boot/docs/current/api/org/springframework/boot/autoconfigure/EnableAutoConfiguration.html)
-work together.
-Everything is documented[^same-broker-multiple-tests][^messaging.kafka.embedded][^kafka-testing-embeddedkafka-annotation] as it should,
-but then I did not read all the documentation up-front as supposedly many of us developers would, too.
+in a
+[`@SpringBootTest`](https://docs.spring.io/spring-boot/docs/current/api/org/springframework/boot/test/context/SpringBootTest.html).
 
-Internet search engines did in my opinion not list the most interesting and simplest examples[^techblog]
-among the top results at the time of this writing.
-With a lot of Internet searching using a lot of time, I eventually dug through to a worthy and recommendable configuration,
-which other people have found before[^stackoverflow-50123621][^stackoverflow-48753051][^stackoverflow-62470196][^stackoverflow-69036197],
-just to mention a few, and so, credits go to them all.
+Eventually, as simple as
+`bootstrapServersProperty = "spring.kafka.bootstrap-servers"`[^embeddedkafka-bootstrap-servers-property]
+fixes the trick.
 
 
 ## Mismatching property name defaults
+
+Everything is documented[^same-broker-multiple-tests][^messaging.kafka.embedded][^kafka-testing-embeddedkafka-annotation] as it should,
+but then I did not read all the documentation up-front as supposedly many of us developers would, too.
 
 Spring Boot Kafka auto-configuration[^spring-boot-kafka-auto-configuration], consisting of
 [`KafkaAutoConfiguration`](https://docs.spring.io/spring-boot/docs/current/api/org/springframework/boot/autoconfigure/kafka/KafkaAutoConfiguration.html)
@@ -44,9 +30,9 @@ into
 .
 
 By default,
-[`@EmbeddedKafka`](https://docs.spring.io/spring-kafka/api/org/springframework/kafka/test/context/EmbeddedKafka.html)
-, however, provides such a value with a property with a different name, namely
-"`spring.embedded.kafka.brokers`" and both don't match out of the box.
+[`@EmbeddedKafka`](https://docs.spring.io/spring-kafka/api/org/springframework/kafka/test/context/EmbeddedKafka.html),
+however, provides such a value with a property with a different name, named
+"`spring.embedded.kafka.brokers`" and both don't match out of the box:
 
 ```
 spring.kafka.bootstrap-servers
@@ -63,7 +49,7 @@ spring.embedded.kafka.brokers
 
 ## Make Spring Kafka auto-configuration pick up `@EmbeddedKafka`'s `bootstrap.servers`
 
-The easiest and quickest approach to make them fit is configuring
+The easiest and quickest approach to make the context property names fit is configuring
 
 ```java
 @EmbeddedKafka(bootstrapServersProperty = "spring.kafka.bootstrap-servers")
@@ -77,7 +63,7 @@ The easiest and quickest approach to make them fit is configuring
 })
 ```
 
-would do just as well.
+would do just as well among many more possibilities.
 
 The essential parts of a Spring Boot test with
 [`@EmbeddedKafka`](https://docs.spring.io/spring-kafka/api/org/springframework/kafka/test/context/EmbeddedKafka.html)
@@ -93,29 +79,148 @@ class EmbeddedKafkaTest {
     static class TestConfiguration {
     }
 
-...
+    ...
+}
 ```
 
-For the complete sources see the Github repository[^sources] accompanying this article.
+With that configuration,
+[`@KafkaListener`](https://docs.spring.io/spring-kafka/api/org/springframework/kafka/annotation/KafkaListener.html)
+annotated consumer methods and all kinds of
+[`@Autowired`](https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/beans/factory/annotation/Autowired.html)
+dependencies such as
+[`KafkaTemplate`](https://docs.spring.io/spring-kafka/api/org/springframework/kafka/core/KafkaTemplate.html),
+[`KafkaAdmin`](https://docs.spring.io/spring-kafka/docs/current/api/org/springframework/kafka/core/KafkaAdmin.html),
+[`ConsumerFactory`](https://docs.spring.io/spring-kafka/api/org/springframework/kafka/core/ConsumerFactory.html),
+and
+[`ProducerFactory`](https://docs.spring.io/spring-kafka/api/org/springframework/kafka/core/ProducerFactory.html)
+already resolve.
 
-
-## Unique consumer `group.id`s[^kafka-consumer-group-id]
-
-Applying
+With some more minor tweaks explained further below, a working example looks like this:
 
 ```java
+import java.time.Duration;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.TimeUnit;
+
+import org.apache.kafka.clients.consumer.Consumer;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.apache.kafka.clients.producer.Producer;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.TestInstance.Lifecycle;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.core.ConsumerFactory;
+import org.springframework.kafka.core.KafkaAdmin;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.core.ProducerFactory;
+import org.springframework.kafka.test.EmbeddedKafkaBroker;
+import org.springframework.kafka.test.context.EmbeddedKafka;
+import org.springframework.test.context.TestPropertySource;
+
+import static java.util.Arrays.asList;
+import static org.assertj.core.api.Assertions.assertThat;
+
+@SpringBootTest
+@EmbeddedKafka(
+    bootstrapServersProperty = "spring.kafka.bootstrap-servers",
+    topics = EmbeddedKafkaTest.TOPIC_NAME
+)
+@TestPropertySource(properties = "spring.kafka.consumer.auto-offset-reset = earliest")
 @TestInstance(Lifecycle.PER_CLASS)
+class EmbeddedKafkaTest {
+
+    @Configuration
+    @EnableAutoConfiguration
+    static class TestConfiguration {
+    }
+
+    static final String TOPIC_NAME = "topic";
+
+    @Autowired
+    private KafkaAdmin admin;
+
+    @Autowired
+    private ConsumerFactory<String, String> consumerFactory;
+
+    @Autowired
+    private ProducerFactory<String, String> producerFactory;
+
+    @Autowired
+    private KafkaTemplate<String, String> kafkaTemplate;
+
+    private BlockingQueue<ConsumerRecord<String, String>> consumptionQueue = new LinkedBlockingDeque<>();
+
+    @KafkaListener(topics = TOPIC_NAME, groupId = "listener")
+    private void listen(ConsumerRecord<String, String> consumerRecord) throws InterruptedException {
+        consumptionQueue.put(consumerRecord);
+    }
+
+    @Test
+    void testProducerAndConsumer() throws Exception {
+        final String KEY = "key1", VALUE = "value1";
+        try (
+            Consumer<String, String> consumer = consumerFactory.createConsumer("consumer", null);
+            Producer<String, String> producer = producerFactory.createProducer();
+        ) {
+            consumer.subscribe(asList(TOPIC_NAME));
+
+            producer.send(new ProducerRecord<>(TOPIC_NAME, KEY, VALUE), (metadata, exception) -> {
+            }).get();
+            ConsumerRecords<String, String> records = consumer.poll(Duration.ofSeconds(3));
+
+            assertThat(records).singleElement().satisfies(singleRecord -> {
+                assertThat(singleRecord.key()).isEqualTo(KEY);
+                assertThat(singleRecord.value()).isEqualTo(VALUE);
+            });
+            consumer.commitSync();
+            consumer.unsubscribe();
+        }
+    }
+
+    @Test
+    void testTemplateAndListener() throws Exception {
+        final String KEY = "key2", VALUE = "value2";
+        consumptionQueue.clear();
+
+        kafkaTemplate.send(TOPIC_NAME, KEY, VALUE).get();
+        ConsumerRecord<String, String> consumerRecord = consumptionQueue.poll(3, TimeUnit.SECONDS);
+
+        assertThat(consumerRecord.key()).isEqualTo(KEY);
+        assertThat(consumerRecord.value()).isEqualTo(VALUE);
+        assertThat(consumptionQueue).isEmpty();
+    }
+
+    @Test
+    void checkBootstrapServersParameterResolutionExample(
+        @Value("${spring.kafka.bootstrap-servers}") String bootstrapServers,
+        @Autowired EmbeddedKafkaBroker broker
+    ) throws Exception {
+        assertThat(broker.getBrokersAsString()).isEqualTo(bootstrapServers);
+    }
+
+    @Test
+    void testAdmin() {
+        assertThat(admin.describeTopics(TOPIC_NAME)).containsKey(TOPIC_NAME);
+    }
+
+}
 ```
 
-to the test classes prevents JUnit from instantiating for each `@Test` method another instance of the test class
-and in turn Spring instantiating each time another
-[`@KafkaListener`](https://docs.spring.io/spring-kafka/api/org/springframework/kafka/annotation/KafkaListener.html)
-the always same `group.id` of which then not any longer being unique (unless the test class has not more than one `@Test` method).
 
-Whenever there is more than one consumer, used directly or indirectly by a
-[`@KafkaListener`](https://docs.spring.io/spring-kafka/api/org/springframework/kafka/annotation/KafkaListener.html)
-, the consumer `group.id` can be specified, in a simple way but there are plenty other variant possible,
-for example like this:
+### Unique consumer `group.id`s[^kafka-consumer-group-id]
+
+Whenever there is more than one consumer, no matter whether created explicitly or indirectly by a
+[`@KafkaListener`](https://docs.spring.io/spring-kafka/api/org/springframework/kafka/annotation/KafkaListener.html),
+each consumer's `group.id` has to be specified in order to be unique.
+There are plenty other ways possible, but it can be achieved for example like this:
 
 ```java
 @KafkaListener(..., groupId = "unique-listener-group-id")
@@ -127,26 +232,63 @@ or
 consumerFactory.createConsumer("unique-consumer-group-id", null);
 ```
 
-By no means is this meant to comprehensively explain consumer groups, but just as a potentially useful hint.
+By no means is this meant to comprehensively explain consumer groups, just as a potentially useful hint.
 
-Also useful might be
+Applying
+
+```java
+@TestInstance(Lifecycle.PER_CLASS)
+```
+
+to the test classes prevents JUnit from instantiating for each
+[`@Test`](https://junit.org/junit5/docs/current/api/org.junit.jupiter.api/org/junit/jupiter/api/Test.html)
+method another instance of the test class
+and in turn Spring instantiating another context including each time another
+[`@KafkaListener`](https://docs.spring.io/spring-kafka/api/org/springframework/kafka/annotation/KafkaListener.html)
+the always same `group.id` of which then not any longer being unique
+because always based on the very same configuration
+(obviously except when the test class has not more than one
+[`@Test`](https://junit.org/junit5/docs/current/api/org.junit.jupiter.api/org/junit/jupiter/api/Test.html)
+method).
+
+
+### auto.offset.reset = earliest
+
+Also useful might be:
 
 ```java
 @TestPropertySource(properties = "spring.kafka.consumer.auto-offset-reset = earliest")
 ```
 
-as just another example.
 
+## A side-note to alternatives
 
-## Testcontainers
+### Docker Compose
 
-As an alternative for Springs
+There are many examples out there that work with Docker Compose.
+While that certainly has its point, however, in my opinion, it is generally preferable that tests include all the setup they need,
+which is the case with
 [`@EmbeddedKafka`](https://docs.spring.io/spring-kafka/api/org/springframework/kafka/test/context/EmbeddedKafka.html)
-in-memory Kafka broker setup, using
-[Testcontainers](https://github.com/testcontainers/testcontainers-java)
-might feel closer to plain Kafka as it for example supports environment variables as documented
+and is not with Docker Compose. With
+[`@EmbeddedKafka`](https://docs.spring.io/spring-kafka/api/org/springframework/kafka/test/context/EmbeddedKafka.html)
+anyone can just check out and start a test from within their favorite IDE.
+With Docker Compose some Docker containers usually have to be started before running tests or
+worse if there are for example port collisions or left over data from previously run tests.
+
+
+### Testcontainers
+
+Probably the closest alternative to
+[`@EmbeddedKafka`](https://docs.spring.io/spring-kafka/api/org/springframework/kafka/test/context/EmbeddedKafka.html)
+in-memory Kafka broker setup with Spring is
+[Testcontainers](https://java.testcontainers.org/).
+
+It supports for example environment variables as documented and
 as opposed to similarly but not identically named Spring context properties,
-for example "`bootstrap.servers`"[^kafka-consumer-bootstrap-servers] vs. "`spring.kafka.bootstrap-servers`"[^kafka-properties-bootstrap-servers].
+for example "`bootstrap.servers`"[^kafka-consumer-bootstrap-servers] vs. "`spring.kafka.bootstrap-servers`"[^kafka-properties-bootstrap-servers]
+and generally might feel to come closer to plain Kafka or a production setup than
+[`@EmbeddedKafka`](https://docs.spring.io/spring-kafka/api/org/springframework/kafka/test/context/EmbeddedKafka.html)
+ever will.
 
 Testcontainers provides with
 [`KafkaContainer`](https://www.testcontainers.org/modules/kafka/)
@@ -164,25 +306,28 @@ I'd recommend to check out
 
 ## Conclusion
 
-There are plenty of examples out there in the Internet and the sheer number and variety makes it cumbersome to find appropriate examples.
-Many use Kafka clusters defined outside the test and plenty more use more or less verbose ways to configure a
-[`@SpringBootTest`](https://docs.spring.io/spring-boot/docs/current/api/org/springframework/boot/test/context/SpringBootTest.html)
-with an
-[`@EmbeddedKafka`](https://docs.spring.io/spring-kafka/api/org/springframework/kafka/test/context/EmbeddedKafka.html)
-.
-The focus of the article here is to show the easiest variant to get started,
-which in my opinion includes the setup of the Kafka cluster used for a test within that very same test itself.
+There are plenty of examples out there in the Internet and their sheer number and variety makes it cumbersome to find appropriate examples.
 
-Far as I remember, I never had anything from Spring that did not come with working defaults prior to
+As far as I remember, I never had anything from Spring that did not come with working defaults prior to
 [`@EmbeddedKafka`](https://docs.spring.io/spring-kafka/api/org/springframework/kafka/test/context/EmbeddedKafka.html)
 and Spring Boot Kafka auto-configuration[^spring-boot-kafka-auto-configuration],
 which is a big surprise and I figure justifies to spread the word about how to make it work.
 
-After all and with the examples shown, just one piece of additional configuration is unexpectedly necessary and
+After all and with the example shown, just one piece of additional configuration is unexpectedly necessary and
 writing tests with Spring is as easy as ever also with Kafka.
 
 
 ## References
+
+@EmbeddedKafka and Spring Boot Kafka auto-configuration in a @SpringBootTest joined with bootstrapServersProperty:
+https://blog.mimacom.com/embeddedkafka-kafka-auto-configure-springboottest-bootstrapserversproperty/
+
+Testing an Apache Kafka Integration within a Spring Boot Application and JUnit 5 (mimacom Tech Blog):
+https://blog.mimacom.com/testing-apache-kafka-with-spring-boot-junit5/
+
+Repository on Github accompanying this article with the complete sources:
+https://github.com/dev-qnz/embedded-kafka-spring-auto-configuration-test
+
 
 [^sources]: Repository on Github accompanying this article with the complete sources
 https://github.com/dev-qnz/embedded-kafka-spring-auto-configuration-test
